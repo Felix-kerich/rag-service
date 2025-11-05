@@ -33,31 +33,51 @@ class Generator:
 
     # --- Prompt Construction ---
     if contexts:
-      context_block = "\n\n".join([f"Source {i+1}:\n{c}" for i, c in enumerate(contexts)])
+      # Truncate contexts to avoid overly long prompts that might trigger safety filters
+      truncated_contexts = []
+      for ctx in contexts[:3]:  # Limit to top 3 contexts
+        # Take first 1500 characters of each context to keep it manageable
+        truncated_ctx = ctx[:1500] + "..." if len(ctx) > 1500 else ctx
+        truncated_contexts.append(truncated_ctx)
+      
+      context_block = "\n\n".join([f"Reference {i+1}:\n{c}" for i, c in enumerate(truncated_contexts)])
       prompt = (
-        "You are a friendly, concise agronomy assistant for maize farmers in Kenya. "
-        "Only answer questions related to maize farming (e.g., planting, varieties, soil, fertilizer, pests, diseases, irrigation, harvest, storage, markets). "
-        "If the user asks about anything outside maize farming, politely refuse with a short note: 'Sorry, I can only help with maize farming topics.' and invite a maize-related question. "
-        "Use ONLY the provided sources to answer. If unsure or sources conflict, say so and suggest next steps. "
-        "Keep responses short and actionable, use bullet points when useful, and keep a warm tone.\n\n"
-        f"Question: {question}\n\nSources:\n{context_block}\n\nAnswer:"
+        "You are an agricultural advisor helping farmers with maize cultivation. "
+        "Based on the reference materials provided, answer the farmer's question clearly and concisely. "
+        "Focus on practical, actionable advice. Use bullet points for clarity when appropriate.\n\n"
+        f"Farmer's Question: {question}\n\n"
+        f"Reference Materials:\n{context_block}\n\n"
+        f"Your Response:"
       )
     else:
       prompt = (
-        "You are a friendly, concise agronomy assistant for maize farmers in Kenya. "
-        "Only answer questions related to maize farming. If the question is outside maize farming, reply: 'Sorry, I can only help with maize farming topics.' and invite a maize-related question. "
-        "If you lack enough information, say so and ask for specifics.\n\n"
-        f"Question: {question}\n\nAnswer:"
+        "You are an agricultural advisor helping farmers with maize cultivation. "
+        "Answer the farmer's question based on general agricultural knowledge. "
+        "Keep your response practical and helpful.\n\n"
+        f"Farmer's Question: {question}\n\n"
+        f"Your Response:"
       )
     # --- End Prompt Construction ---
 
 
     try:
+      # Configure safety settings to be less restrictive for agricultural content
+      safety_settings = [
+        {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+        {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+        {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+        {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"}
+      ]
+      
       # Call the model
-      resp = self.model.generate_content(prompt, generation_config={
-        "temperature": 0.2,
-        "max_output_tokens": 400
-      })
+      resp = self.model.generate_content(
+        prompt, 
+        generation_config={
+          "temperature": 0.3,
+          "max_output_tokens": 500
+        },
+        safety_settings=safety_settings
+      )
 
       # Attempt to get the text
       text = resp.text
