@@ -15,8 +15,9 @@ from .generator import Generator
 load_dotenv()
 
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
-GENERATION_MODEL = os.getenv("GENERATION_MODEL", "gemini-2.5-flash")
+GENERATION_MODEL = os.getenv("GENERATION_MODEL", "gemini-1.5-flash")
 INDEX_DIR = os.getenv("INDEX_DIR", "data")
+PORT = int(os.getenv("PORT", "8088"))
 
 app = FastAPI(title="Maize RAG Service (Ollama + Gemini)", version="1.2.0")
 app.add_middleware(

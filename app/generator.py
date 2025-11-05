@@ -2,16 +2,14 @@ import os
 from typing import List
 
 import google.generativeai as genai
-# 🐛 FIX: Corrected import path for APIError
-# The APIError class is now imported directly from the main google.generativeai package.
-from google.generativeai import APIError 
+from google.api_core import exceptions as google_exceptions 
 
 
 GREETING_TOKENS = {"hi", "hii", "hello", "hey", "habari", "mambo", "salama", "niaje", "sup"}
 
 
 class Generator:
-  def __init__(self, model_name: str = "gemini-2.5-flash"):
+  def __init__(self, model_name: str = "gemini-1.5-flash"):
     self.model_name = model_name
     api_key = os.getenv("GOOGLE_API_KEY")
     if not api_key:
@@ -88,7 +86,7 @@ class Generator:
       return f"An issue occurred while processing the model's response: {str(e)[:100]}"
     
     # Handle Network/API Errors
-    except APIError as e:
+    except google_exceptions.GoogleAPIError as e:
       # Catch specific Google Generative AI API errors (e.g., rate limit, invalid key, etc.)
       return f"A Gemini API error occurred: {e}. Please check your GOOGLE_API_KEY and network connection."
     
