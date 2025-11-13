@@ -654,10 +654,49 @@ def advice(req: AdviceRequest):
         )
 
         analytics.mark_generation_start(tracking_data)
-        # Use enhanced rule-based system that analyzes the farm data intelligently
+        # Try AI generation first, fallback to enhanced rule-based system
         print(f"🌾 Generating intelligent advice for {ctx_dict.get('crop_type', 'maize')} farmer in {ctx_dict.get('location', 'Kenya')}")
+        
+        try:
+            # Attempt AI-powered advice generation
+            answer = generator.generate_advice(
+                analytics_context=analytics_block,
+                enhanced_prompt=question,
+                contexts=[r["text"] for r in results]
+            )
+            
+            # Try to parse AI response
+            import json
+            try:
+                ai_advice = json.loads(answer)
+                print("✅ AI-powered advice generated successfully")
+                
+                # Complete analytics tracking for AI advice
+                analytics.complete_query_tracking(
+                    tracking_data=tracking_data,
+                    retrieved_contexts=results,
+                    response=ai_advice.get("advice", "AI-generated advice"),
+                    success=True
+                )
+                
+                return AdviceResponse(
+                    advice=ai_advice.get("advice", "AI-generated agricultural advice"),
+                    fertilizer_recommendations=ai_advice.get("fertilizer_recommendations", []),
+                    prioritized_actions=ai_advice.get("prioritized_actions", []),
+                    risk_warnings=ai_advice.get("risk_warnings", []),
+                    seed_recommendations=ai_advice.get("seed_recommendations", []),
+                    contexts=results
+                )
+            except json.JSONDecodeError:
+                print("⚠️ AI response parsing failed, using enhanced fallback")
+                
+        except Exception as ai_error:
+            print(f"⚠️ AI generation failed: {str(ai_error)}, using enhanced fallback")
+        
+        # Enhanced rule-based system (current working system)
         fallback_plan = _generate_rule_based_recommendations(ctx_dict)
         enhanced_advice = _create_enhanced_fallback_advice(ctx_dict, fallback_plan)
+        print("🧠 Using enhanced rule-based intelligence system")
         
         # Complete analytics tracking for enhanced advice
         analytics.complete_query_tracking(
