@@ -1,5 +1,6 @@
 import os
 import json
+import uuid
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 
@@ -14,6 +15,7 @@ from pypdf import PdfReader
 from .retriever import Retriever
 from .generator import Generator
 from .database import ConversationDatabase
+from .analytics import analytics
 from .schemas import (
     IngestRequest, 
     QueryRequest, 
@@ -137,45 +139,77 @@ def query(req: QueryRequest):
     - **conversation_id**: Optional conversation ID for history tracking
     - **user_id**: User identifier (required)
     """
-    # Retrieve relevant contexts
-    results = retriever.search(req.question, k=req.k)
-    
-    # Generate answer
-    answer = generator.generate(
-        question=req.question,
-        contexts=[r["text"] for r in results]
+    # Start analytics tracking
+    query_id = str(uuid.uuid4())
+    tracking_data = analytics.start_query_tracking(
+        query_id=query_id,
+        user_id=req.user_id,
+        query_text=req.question,
+        endpoint="/query"
     )
     
-    # Handle conversation history
-    conversation_id = req.conversation_id
-    if not conversation_id:
-        # Create new conversation if not provided
-        conversation = conversation_db.create_conversation(
-            user_id=req.user_id,
-            title=req.question[:50] + ("..." if len(req.question) > 50 else "")
+    try:
+        # Retrieve relevant contexts
+        analytics.mark_retrieval_start(tracking_data)
+        results = retriever.search(req.question, k=req.k)
+        
+        # Generate answer
+        analytics.mark_generation_start(tracking_data)
+        answer = generator.generate(
+            question=req.question,
+            contexts=[r["text"] for r in results]
         )
-        conversation_id = conversation.conversation_id
-    
-    # Add user message
-    conversation_db.add_message(
-        conversation_id=conversation_id,
-        role="user",
-        content=req.question
-    )
-    
-    # Add assistant message with contexts
-    conversation_db.add_message(
-        conversation_id=conversation_id,
-        role="assistant",
-        content=answer,
-        contexts=results
-    )
-    
-    return QueryResponse(
-        answer=answer,
-        contexts=results,
-        conversation_id=conversation_id
-    )
+        
+        # Handle conversation history
+        conversation_id = req.conversation_id
+        if not conversation_id:
+            # Create new conversation if not provided
+            conversation = conversation_db.create_conversation(
+                user_id=req.user_id,
+                title=req.question[:50] + ("..." if len(req.question) > 50 else "")
+            )
+            conversation_id = conversation.conversation_id
+        
+        # Add user message
+        conversation_db.add_message(
+            conversation_id=conversation_id,
+            role="user",
+            content=req.question
+        )
+        
+        # Add assistant message with contexts
+        conversation_db.add_message(
+            conversation_id=conversation_id,
+            role="assistant",
+            content=answer,
+            contexts=results
+        )
+        
+        # Complete analytics tracking
+        analytics.complete_query_tracking(
+            tracking_data=tracking_data,
+            retrieved_contexts=results,
+            response=answer,
+            success=True,
+            conversation_id=conversation_id
+        )
+        
+        return QueryResponse(
+            answer=answer,
+            contexts=results,
+            conversation_id=conversation_id
+        )
+        
+    except Exception as e:
+        # Track failed query
+        analytics.complete_query_tracking(
+            tracking_data=tracking_data,
+            retrieved_contexts=[],
+            response="",
+            success=False,
+            error_message=str(e)
+        )
+        raise HTTPException(status_code=500, detail=f"Query processing failed: {str(e)}")
 
 
 def _format_analytics_context(ctx: dict) -> str:
@@ -321,6 +355,63 @@ def _generate_structured_lists_with_model(ctx: Dict[str, Any], narrative: str) -
         }
     except Exception:
         return {}
+
+
+def _create_enhanced_advice_prompt(ctx: Dict[str, Any]) -> str:
+    """Create an enhanced, context-aware prompt for agricultural advice generation"""
+    crop = ctx.get("crop_type", "maize")
+    
+    # Analyze the farm performance to tailor the advice
+    profit_margin = _to_float(ctx.get("profit_margin"))
+    net_profit = _to_float(ctx.get("net_profit"))
+    avg_yield = _to_float(ctx.get("average_yield_per_unit"))
+    best_yield = _to_float(ctx.get("best_yield"))
+    rainfall = _to_float(ctx.get("rainfall_mm"))
+    soil_ph = _to_float(ctx.get("soil_ph"))
+    
+    # Determine focus areas based on performance
+    focus_areas = []
+    if profit_margin is not None and profit_margin < 20:
+        focus_areas.append("cost optimization and profitability improvement")
+    if avg_yield is not None and best_yield is not None and (best_yield - avg_yield) > (0.3 * avg_yield):
+        focus_areas.append("yield consistency across all plots")
+    if rainfall is not None and rainfall < 400:
+        focus_areas.append("drought management and water conservation")
+    if soil_ph is not None and (soil_ph < 5.5 or soil_ph > 7.0):
+        focus_areas.append("soil pH correction and nutrient management")
+    
+    focus_text = f"Pay special attention to: {', '.join(focus_areas)}." if focus_areas else ""
+    
+    prompt = f"""As an expert agricultural advisor specializing in {crop} farming, analyze the provided farm analytics and generate comprehensive, actionable advice.
+
+ANALYSIS REQUIREMENTS:
+1. Evaluate current farm performance against industry benchmarks
+2. Identify the top 3 limiting factors affecting profitability
+3. Provide specific, measurable recommendations with timelines
+4. Consider local growing conditions and seasonal factors
+5. {focus_text}
+
+RESPONSE FORMAT:
+Return your response as valid JSON with these exact keys:
+{{
+    "advice": "Detailed narrative advice (200-300 words) addressing the farmer directly",
+    "fertilizer_recommendations": ["Specific fertilizer recommendations with rates and timing"],
+    "prioritized_actions": ["Top priority actions with timelines"],
+    "risk_warnings": ["Specific risks and mitigation strategies"],
+    "seed_recommendations": ["Variety recommendations based on conditions"]
+}}
+
+GUIDELINES:
+- Be specific with quantities, rates, and timing
+- Include cost-benefit considerations
+- Address the farmer's current performance level
+- Provide actionable steps, not generic advice
+- Consider the local context and conditions
+- Focus on practical, implementable solutions
+
+Generate advice that will help this farmer improve their {crop} production efficiency and profitability."""
+
+    return prompt
 
 
 def _generate_rule_based_recommendations(ctx: Dict[str, Any]) -> Dict[str, Any]:
@@ -486,98 +577,83 @@ def advice(req: AdviceRequest):
     """
     Generate prescriptive advice and fertilizer recommendations using provided analytics context.
     """
-    ctx_dict = req.context.model_dump()
-    analytics_block = _format_analytics_context(ctx_dict)
-
-    question = (
-        "Given the farm analytics below, provide prescriptive, step-by-step recommendations to improve yield and profitability. "
-        "Recommend specific fertilizer types and application timings based on soil and crop stage, suggest cost optimizations, and highlight risks. "
-        "Return your result as strict JSON with keys: advice (string), fertilizer_recommendations (string[]), prioritized_actions (string[]), risk_warnings (string[])."
+    # Start analytics tracking
+    query_id = str(uuid.uuid4())
+    tracking_data = analytics.start_query_tracking(
+        query_id=query_id,
+        user_id=req.user_id,
+        query_text=f"Advice request for {req.context.crop_type}",
+        endpoint="/advice"
     )
-
-    # Retrieve context from knowledge base
-    results = retriever.search(
-        f"Best agronomic practices and fertilizer programs for {req.context.crop_type}. Soil={req.context.soil_type} pH={req.context.soil_ph}",
-        k=req.k
-    )
-
-    # Build a single prompt including analytics
-    prompt = (
-        "You are an agricultural advisor for smallholder and commercial farmers.\n\n"
-        "Farm Analytics:\n"
-        f"{analytics_block}\n\n"
-        "Task:\n"
-        f"{question}\n"
-        "Ensure JSON is valid and does not include markdown code fences."
-    )
-
-    answer = generator.generate(prompt, contexts=[r["text"] for r in results])
-    if ADVICE_DEBUG:
-        print("\n=== ADVICE DEBUG: Primary Model Answer ===")
-        print(answer)
-        print("=== END ANSWER ===\n")
-    fallback_plan = _generate_rule_based_recommendations(ctx_dict)
-
-    # Try to parse JSON from the model output
-    parsed: Dict[str, Any] = {}
+    
     try:
-        # Heuristic: find first JSON object in the output
-        start = answer.find("{")
-        end = answer.rfind("}")
-        if start != -1 and end != -1 and end > start:
-            parsed = json.loads(answer[start:end+1])
-            if ADVICE_DEBUG:
-                print("=== ADVICE DEBUG: Parsed JSON keys from primary model ===")
-                print(list(parsed.keys()))
-                print("=== END PARSED ===\n")
-    except Exception:
-        parsed = {}
+        ctx_dict = req.context.model_dump()
+        analytics_block = _format_analytics_context(ctx_dict)
 
-    def _extract_list(key: str) -> List[str]:
-        v = parsed.get(key)
-        if isinstance(v, list):
-            return [str(x).strip() for x in v if str(x).strip()]
-        # fallback: derive bullet points from text
-        lines = []
-        for line in answer.splitlines():
-            s = line.strip()
-            if s.startswith(("-", "*")) and len(s) > 2:
-                lines.append(s.lstrip("-* ").strip())
-        return lines[:6]
+        # Create enhanced prompt for maize-specific advice
+        question = _create_enhanced_advice_prompt(ctx_dict)
 
-    if "blocked by safety filters" in answer.lower():
-        decorated = _decorate_advice(fallback_plan["advice"])
-        if ADVICE_DEBUG:
-            print("=== ADVICE DEBUG: Safety filter triggered; returning fallback plan ===")
-            print(fallback_plan)
-            print("=== END FALLBACK ===\n")
-        return AdviceResponse(
-            advice=decorated,
-            fertilizer_recommendations=_clean_list(fallback_plan["fertilizer_recommendations"]),
-            prioritized_actions=_clean_list(fallback_plan["prioritized_actions"]),
-            risk_warnings=_clean_list(fallback_plan["risk_warnings"]),
-            seed_recommendations=_clean_list(fallback_plan["seed_recommendations"]),
-            contexts=results
+        # Retrieve context from knowledge base
+        analytics.mark_retrieval_start(tracking_data)
+        results = retriever.search(
+            f"Best agronomic practices and fertilizer programs for {req.context.crop_type}. Soil={req.context.soil_type} pH={req.context.soil_ph}",
+            k=req.k
         )
 
-    advice_text = parsed.get("advice")
-    structured_lists = {
-        "fertilizer": _clean_list(_extract_list("fertilizer_recommendations")),
-        "actions": _clean_list(_extract_list("prioritized_actions")),
-        "risks": _clean_list(_extract_list("risk_warnings")),
-        "seeds": _clean_list(_extract_list("seed_recommendations"))
-    }
-    if ADVICE_DEBUG:
-        print("=== ADVICE DEBUG: Initial structured lists from primary JSON ===")
-        print(structured_lists)
-        print("=== END LISTS ===\n")
+        # Build a single prompt including analytics
+        prompt = (
+            "You are an agricultural advisor for smallholder and commercial farmers.\n\n"
+            "Farm Analytics:\n"
+            f"{analytics_block}\n\n"
+            "Task:\n"
+            f"{question}\n"
+            "Ensure JSON is valid and does not include markdown code fences."
+        )
 
-    if not isinstance(advice_text, str) or not advice_text.strip():
-        narrative = (answer or "").strip()
-        if not narrative:
+        analytics.mark_generation_start(tracking_data)
+        # Use specialized advice generation method
+        answer = generator.generate_advice(
+            analytics_context=analytics_block,
+            enhanced_prompt=question,
+            contexts=[r["text"] for r in results]
+        )
+        if ADVICE_DEBUG:
+            print("\n=== ADVICE DEBUG: Primary Model Answer ===")
+            print(answer)
+            print("=== END ANSWER ===\n")
+        fallback_plan = _generate_rule_based_recommendations(ctx_dict)
+
+        # Try to parse JSON from the model output
+        parsed: Dict[str, Any] = {}
+        try:
+            # Heuristic: find first JSON object in the output
+            start = answer.find("{")
+            end = answer.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                parsed = json.loads(answer[start:end+1])
+                if ADVICE_DEBUG:
+                    print("=== ADVICE DEBUG: Parsed JSON keys from primary model ===")
+                    print(list(parsed.keys()))
+                    print("=== END PARSED ===\n")
+        except Exception:
+            parsed = {}
+
+        def _extract_list(key: str) -> List[str]:
+            v = parsed.get(key)
+            if isinstance(v, list):
+                return [str(x).strip() for x in v if str(x).strip()]
+            # fallback: derive bullet points from text
+            lines = []
+            for line in answer.splitlines():
+                s = line.strip()
+                if s.startswith(("-", "*")) and len(s) > 2:
+                    lines.append(s.lstrip("-* ").strip())
+            return lines[:6]
+
+        if "blocked by safety filters" in answer.lower():
             decorated = _decorate_advice(fallback_plan["advice"])
             if ADVICE_DEBUG:
-                print("=== ADVICE DEBUG: Empty narrative; using fallback plan ===")
+                print("=== ADVICE DEBUG: Safety filter triggered; returning fallback plan ===")
                 print(fallback_plan)
                 print("=== END FALLBACK ===\n")
             return AdviceResponse(
@@ -588,41 +664,91 @@ def advice(req: AdviceRequest):
                 seed_recommendations=_clean_list(fallback_plan["seed_recommendations"]),
                 contexts=results
             )
-        advice_text = narrative
-        structured_lists = _extract_structured_lists(narrative)
+
+        advice_text = parsed.get("advice")
+        structured_lists = {
+            "fertilizer": _clean_list(_extract_list("fertilizer_recommendations")),
+            "actions": _clean_list(_extract_list("prioritized_actions")),
+            "risks": _clean_list(_extract_list("risk_warnings")),
+            "seeds": _clean_list(_extract_list("seed_recommendations"))
+        }
         if ADVICE_DEBUG:
-            print("=== ADVICE DEBUG: Heuristic lists extracted from narrative ===")
+            print("=== ADVICE DEBUG: Initial structured lists from primary JSON ===")
             print(structured_lists)
-            print("=== END HEURISTIC ===\n")
-        if _structured_lists_empty(structured_lists):
-            generated_lists = _generate_structured_lists_with_model(ctx_dict, narrative)
-            if generated_lists:
-                structured_lists = generated_lists
-                if ADVICE_DEBUG:
-                    print("=== ADVICE DEBUG: Generated lists via follow-up model JSON ===")
-                    print(structured_lists)
-                    print("=== END FOLLOW-UP ===\n")
-    else:
-        # parsed JSON but still missing lists; ask model if needed
-        if _structured_lists_empty(structured_lists):
-            generated_lists = _generate_structured_lists_with_model(ctx_dict, advice_text)
-            if generated_lists:
-                structured_lists = generated_lists
-                if ADVICE_DEBUG:
-                    print("=== ADVICE DEBUG: Filled missing lists via follow-up model JSON ===")
-                    print(structured_lists)
-                    print("=== END FOLLOW-UP ===\n")
+            print("=== END LISTS ===\n")
 
-    advice_text = _decorate_advice(advice_text)
+        if not isinstance(advice_text, str) or not advice_text.strip():
+            narrative = (answer or "").strip()
+            if not narrative:
+                decorated = _decorate_advice(fallback_plan["advice"])
+                if ADVICE_DEBUG:
+                    print("=== ADVICE DEBUG: Empty narrative; using fallback plan ===")
+                    print(fallback_plan)
+                    print("=== END FALLBACK ===\n")
+                return AdviceResponse(
+                    advice=decorated,
+                    fertilizer_recommendations=_clean_list(fallback_plan["fertilizer_recommendations"]),
+                    prioritized_actions=_clean_list(fallback_plan["prioritized_actions"]),
+                    risk_warnings=_clean_list(fallback_plan["risk_warnings"]),
+                    seed_recommendations=_clean_list(fallback_plan["seed_recommendations"]),
+                    contexts=results
+                )
+            advice_text = narrative
+            structured_lists = _extract_structured_lists(narrative)
+            if ADVICE_DEBUG:
+                print("=== ADVICE DEBUG: Heuristic lists extracted from narrative ===")
+                print(structured_lists)
+                print("=== END HEURISTIC ===\n")
+            if _structured_lists_empty(structured_lists):
+                generated_lists = _generate_structured_lists_with_model(ctx_dict, narrative)
+                if generated_lists:
+                    structured_lists = generated_lists
+                    if ADVICE_DEBUG:
+                        print("=== ADVICE DEBUG: Generated lists via follow-up model JSON ===")
+                        print(structured_lists)
+                        print("=== END FOLLOW-UP ===\n")
+        else:
+            # parsed JSON but still missing lists; ask model if needed
+            if _structured_lists_empty(structured_lists):
+                generated_lists = _generate_structured_lists_with_model(ctx_dict, advice_text)
+                if generated_lists:
+                    structured_lists = generated_lists
+                    if ADVICE_DEBUG:
+                        print("=== ADVICE DEBUG: Filled missing lists via follow-up model JSON ===")
+                        print(structured_lists)
+                        print("=== END FOLLOW-UP ===\n")
 
-    return AdviceResponse(
-        advice=advice_text.strip(),
-        fertilizer_recommendations=structured_lists["fertilizer"],
-        prioritized_actions=structured_lists["actions"],
-        risk_warnings=structured_lists["risks"],
-        seed_recommendations=structured_lists["seeds"],
-        contexts=results
-    )
+        advice_text = _decorate_advice(advice_text)
+
+        response = AdviceResponse(
+            advice=advice_text.strip(),
+            fertilizer_recommendations=structured_lists["fertilizer"],
+            prioritized_actions=structured_lists["actions"],
+            risk_warnings=structured_lists["risks"],
+            seed_recommendations=structured_lists["seeds"],
+            contexts=results
+        )
+        
+        # Complete analytics tracking
+        analytics.complete_query_tracking(
+            tracking_data=tracking_data,
+            retrieved_contexts=results,
+            response=advice_text,
+            success=True
+        )
+        
+        return response
+    
+    except Exception as e:
+        # Track failed advice request
+        analytics.complete_query_tracking(
+            tracking_data=tracking_data,
+            retrieved_contexts=[],
+            response="",
+            success=False,
+            error_message=str(e)
+        )
+        raise HTTPException(status_code=500, detail=f"Advice generation failed: {str(e)}")
 # ==================== Conversation Management Endpoints ====================
 
 @app.post("/conversations", response_model=Conversation, tags=["Conversations"])
@@ -709,4 +835,70 @@ def delete_conversation(conversation_id: str, user_id: str = Query(..., descript
             status_code=404, 
             detail="Conversation not found or unauthorized"
         )
-    return {"status": "success", "message": "Conversation deleted successfully"} 
+    return {"status": "success", "message": "Conversation deleted successfully"}
+
+
+# ==================== Analytics Endpoints ====================
+
+@app.get("/analytics/performance", tags=["Analytics"])
+def get_performance_analytics(days: int = Query(7, ge=1, le=90, description="Number of days to analyze")):
+    """
+    Get system performance analytics for the specified period
+    
+    - **days**: Number of days to analyze (1-90)
+    """
+    try:
+        insights = analytics.get_performance_insights(days=days)
+        return insights
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get performance analytics: {str(e)}")
+
+
+@app.get("/analytics/users/{user_id}", tags=["Analytics"])
+def get_user_analytics(
+    user_id: str, 
+    days: int = Query(30, ge=1, le=90, description="Number of days to analyze")
+):
+    """
+    Get analytics for a specific user
+    
+    - **user_id**: User identifier
+    - **days**: Number of days to analyze (1-90)
+    """
+    try:
+        user_data = analytics.get_user_analytics(user_id=user_id, days=days)
+        return user_data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get user analytics: {str(e)}")
+
+
+@app.post("/analytics/feedback", tags=["Analytics"])
+def record_feedback(
+    query_id: str = Query(..., description="Query ID to provide feedback for"),
+    rating: int = Query(..., ge=1, le=5, description="Rating from 1-5")
+):
+    """
+    Record user feedback for a query
+    
+    - **query_id**: The query ID to provide feedback for
+    - **rating**: Rating from 1 (poor) to 5 (excellent)
+    """
+    try:
+        analytics.record_user_feedback(query_id=query_id, rating=rating)
+        return {"status": "success", "message": "Feedback recorded successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to record feedback: {str(e)}")
+
+
+@app.get("/analytics/report", tags=["Analytics"])
+def export_analytics_report(days: int = Query(30, ge=1, le=90, description="Number of days to include in report")):
+    """
+    Export comprehensive analytics report
+    
+    - **days**: Number of days to include in the report (1-90)
+    """
+    try:
+        report = analytics.export_analytics_report(days=days)
+        return report
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate analytics report: {str(e)}") 

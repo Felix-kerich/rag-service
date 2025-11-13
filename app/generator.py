@@ -48,9 +48,9 @@ class Generator:
       resp = self.model.generate_content(
         prompt,
         generation_config={
-          "temperature": 0.8,
-          "max_output_tokens": 1500,
-          "top_p": 0.95,
+          "temperature": 0.7,  # Slightly lower for more consistent advice
+          "max_output_tokens": 2000,  # Increased for detailed advice
+          "top_p": 0.9,
           "top_k": 40
         },
         safety_settings=[]
@@ -73,3 +73,71 @@ class Generator:
     except Exception as e:
       print(f"⚠️  Unexpected error: {str(e)[:80]}")
       return "I'm having a temporary issue. Please try again or contact local agricultural services."
+  
+  def generate_advice(self, analytics_context: str, enhanced_prompt: str, contexts: List[str]) -> str:
+    """Specialized method for generating agricultural advice based on analytics"""
+    
+    if contexts:
+      truncated_contexts = []
+      for ctx in contexts[:5]:
+        truncated_ctx = ctx[:2000] if len(ctx) > 2000 else ctx
+        truncated_contexts.append(truncated_ctx)
+      
+      context_block = "\n\n".join([f"Knowledge Source {i+1}:\n{c}" for i, c in enumerate(truncated_contexts)])
+      
+      prompt = f"""You are an expert agricultural advisor specializing in maize farming with deep knowledge of East African farming conditions.
+
+FARM ANALYTICS DATA:
+{analytics_context}
+
+KNOWLEDGE BASE REFERENCES:
+{context_block}
+
+TASK:
+{enhanced_prompt}
+
+IMPORTANT: Your response must be valid JSON only, without any markdown formatting or code blocks."""
+    else:
+      prompt = f"""You are an expert agricultural advisor specializing in maize farming with deep knowledge of East African farming conditions.
+
+FARM ANALYTICS DATA:
+{analytics_context}
+
+TASK:
+{enhanced_prompt}
+
+IMPORTANT: Your response must be valid JSON only, without any markdown formatting or code blocks."""
+
+    if self.debug:
+      print(f"\n=== ADVICE PROMPT ===\n{prompt[:500]}...\n=== END ===\n")
+
+    try:
+      resp = self.model.generate_content(
+        prompt,
+        generation_config={
+          "temperature": 0.6,  # Lower temperature for more consistent advice format
+          "max_output_tokens": 2500,  # More tokens for comprehensive advice
+          "top_p": 0.85,
+          "top_k": 30
+        },
+        safety_settings=[]
+      )
+
+      text = resp.text
+      if text and text.strip():
+        return text.strip()
+      
+      # Fallback advice if generation fails
+      return '{"advice": "Based on your farm data, focus on optimizing input costs while maintaining yield quality. Implement precision farming techniques and monitor soil health regularly.", "fertilizer_recommendations": ["Apply balanced NPK fertilizer at planting", "Top-dress with nitrogen at V6 stage"], "prioritized_actions": ["Conduct soil testing", "Optimize planting density", "Implement integrated pest management"], "risk_warnings": ["Monitor weather patterns for planting decisions", "Watch for pest and disease pressure"], "seed_recommendations": ["Use certified hybrid varieties adapted to your region"]}'
+
+    except ValueError as e:
+      print(f"⚠️  Advice Generation Error: {str(e)[:80]}")
+      return '{"advice": "I encountered an issue generating specific advice. Please implement standard maize farming best practices and consult local agricultural extension services.", "fertilizer_recommendations": ["Apply recommended NPK rates for your soil type"], "prioritized_actions": ["Follow local planting calendar", "Monitor crop development stages"], "risk_warnings": ["Stay updated on weather forecasts", "Scout fields regularly"], "seed_recommendations": ["Use locally adapted varieties"]}'
+    
+    except google_exceptions.GoogleAPIError as e:
+      print(f"⚠️  API Error in Advice Generation: {str(e)[:80]}")
+      return '{"advice": "Unable to generate personalized advice at this time. Focus on maintaining good agricultural practices and seek guidance from local experts.", "fertilizer_recommendations": ["Follow standard fertilization schedule"], "prioritized_actions": ["Maintain field records", "Follow crop calendar"], "risk_warnings": ["Monitor for common pests and diseases"], "seed_recommendations": ["Use quality certified seeds"]}'
+    
+    except Exception as e:
+      print(f"⚠️  Unexpected error in advice generation: {str(e)[:80]}")
+      return '{"advice": "Technical issue encountered. Please try again or consult agricultural extension services for guidance.", "fertilizer_recommendations": ["Apply standard fertilizer recommendations"], "prioritized_actions": ["Follow best farming practices"], "risk_warnings": ["Monitor crop health regularly"], "seed_recommendations": ["Use recommended seed varieties"]}'

@@ -1,0 +1,12 @@
+{
+  "conversation_id": "8097867f-d4ef-41cb-988e-eed6c3230253",
+  "user_id": "test_user_001",
+  "title": "Maize Farming Discussion",
+  "messages": [],
+  "created_at": "2025-11-13T10:41:45.173366",
+  "updated_at": "2025-11-13T10:41:45.173373",
+  "metadata": {
+    "topic": "agriculture",
+    "crop": "maize"
+  }
+}

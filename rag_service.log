@@ -1,0 +1,10 @@
+2025-11-13 05:35:32,546 - app.main - INFO - Processing query for user test_user_001: What are the best practices for maize farming?...
+2025-11-13 05:35:32,549 - app.main - ERROR - Query processing failed for ab981d26-4a71-4478-9225-7ad55f41ef30: [Errno 111] Connection refused
+2025-11-13 05:35:49,552 - app.main - INFO - Processing advice request for user test_user_001, crop: maize
+2025-11-13 05:35:49,555 - app.main - ERROR - Advice generation failed for 55044f52-ea1c-4afd-b16b-3f74e99fe100: [Errno 111] Connection refused
+2025-11-13 05:40:27,423 - app.main - INFO - Processing test advice request for user test_user_001, crop: maize
+2025-11-13 05:40:27,423 - app.main - INFO - Successfully processed test advice request 97fffb93-e211-4693-8326-d9ee7603af58 for user test_user_001
+2025-11-13 05:40:40,304 - app.main - INFO - Processing test advice request for user farmer_jane, crop: beans
+2025-11-13 05:40:40,305 - app.main - INFO - Successfully processed test advice request ab720e18-a4ed-43e0-b8b6-c762fd04d2ae for user farmer_jane
+2025-11-13 05:40:51,214 - app.main - INFO - Processing test advice request for user test_user_001, crop: wheat
+2025-11-13 05:40:51,214 - app.main - INFO - Successfully processed test advice request b496e1a7-8509-4054-81fe-9769c1d9f2f9 for user test_user_001
