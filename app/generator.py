@@ -26,9 +26,22 @@ class Generator:
     tokens = {t.strip(".,!? ") for t in q.split()}
     return any(t in tokens for t in GREETING_TOKENS) and len(tokens) <= 6
 
-  def generate(self, question: str, contexts: List[str]) -> str:
+  def generate(self, question: str, contexts: List[str], conversation_history: List[dict] = None) -> str:
     if self._is_greeting(question):
       return "Hello! How can I help you with maize farming today?"
+
+    # Build conversation context
+    conversation_context = ""
+    if conversation_history:
+      recent_messages = conversation_history[-6:]  # Use last 6 messages for context
+      context_parts = []
+      for msg in recent_messages:
+        role = "User" if msg.get('role') == 'user' else "Assistant"
+        content = msg.get('content', '')[:200]  # Truncate long messages
+        context_parts.append(f"{role}: {content}")
+      
+      if context_parts:
+        conversation_context = "\n\nPrevious conversation:\n" + "\n".join(context_parts) + "\n"
 
     if contexts:
       truncated_contexts = []
@@ -37,9 +50,9 @@ class Generator:
         truncated_contexts.append(truncated_ctx)
       
       context_block = "\n\n".join([f"Source {i+1}:\n{c}" for i, c in enumerate(truncated_contexts)])
-      prompt = f"Based on these materials, answer: {question}\n\nReference Materials:\n{context_block}\n\nYour Response:"
+      prompt = f"You are an expert maize farming advisor. Use the conversation history and reference materials to provide helpful, contextual advice.{conversation_context}\n\nCurrent question: {question}\n\nReference Materials:\n{context_block}\n\nYour Response:"
     else:
-      prompt = f"Answer this farming question: {question}\n\nYour Response:"
+      prompt = f"You are an expert maize farming advisor. Use the conversation history to provide helpful, contextual advice.{conversation_context}\n\nCurrent question: {question}\n\nYour Response:"
 
     if self.debug:
       print(f"\n=== PROMPT ===\n{prompt[:300]}...\n=== END ===\n")

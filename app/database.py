@@ -182,6 +182,41 @@ class ConversationDatabase:
         with open(index_path, 'w', encoding='utf-8') as f:
             json.dump(conversation_ids, f)
     
+    def get_conversation_context(self, conversation_id: str, max_messages: int = 10) -> List[dict]:
+        """Get recent conversation context for LLM prompting"""
+        conversation = self.get_conversation(conversation_id)
+        if not conversation:
+            return []
+        
+        # Get recent messages for context
+        recent_messages = conversation.messages[-max_messages:] if conversation.messages else []
+        
+        # Convert to simple dict format for LLM
+        context = []
+        for msg in recent_messages:
+            context.append({
+                "role": msg.role,
+                "content": msg.content,
+                "timestamp": msg.timestamp.isoformat() if hasattr(msg.timestamp, 'isoformat') else str(msg.timestamp)
+            })
+        
+        return context
+    
+    def get_conversation_summary(self, conversation_id: str) -> Optional[str]:
+        """Get a brief summary of the conversation for context"""
+        conversation = self.get_conversation(conversation_id)
+        if not conversation or not conversation.messages:
+            return None
+        
+        # Create a brief summary from the conversation
+        user_messages = [msg.content for msg in conversation.messages if msg.role == "user"]
+        if user_messages:
+            # Take first few user questions to understand conversation topic
+            topics = user_messages[:3]
+            return f"Previous topics discussed: {', '.join(topic[:50] for topic in topics)}"
+        
+        return None
+    
     def _remove_from_user_index(self, user_id: str, conversation_id: str):
         """Remove a conversation from user's index"""
         index_path = self._get_user_index_path(user_id)
@@ -197,3 +232,38 @@ class ConversationDatabase:
         
         with open(index_path, 'w', encoding='utf-8') as f:
             json.dump(conversation_ids, f)
+    
+    def get_conversation_context(self, conversation_id: str, max_messages: int = 10) -> List[dict]:
+        """Get recent conversation context for LLM prompting"""
+        conversation = self.get_conversation(conversation_id)
+        if not conversation:
+            return []
+        
+        # Get recent messages for context
+        recent_messages = conversation.messages[-max_messages:] if conversation.messages else []
+        
+        # Convert to simple dict format for LLM
+        context = []
+        for msg in recent_messages:
+            context.append({
+                "role": msg.role,
+                "content": msg.content,
+                "timestamp": msg.timestamp.isoformat() if hasattr(msg.timestamp, 'isoformat') else str(msg.timestamp)
+            })
+        
+        return context
+    
+    def get_conversation_summary(self, conversation_id: str) -> Optional[str]:
+        """Get a brief summary of the conversation for context"""
+        conversation = self.get_conversation(conversation_id)
+        if not conversation or not conversation.messages:
+            return None
+        
+        # Create a brief summary from the conversation
+        user_messages = [msg.content for msg in conversation.messages if msg.role == "user"]
+        if user_messages:
+            # Take first few user questions to understand conversation topic
+            topics = user_messages[:3]
+            return f"Previous topics discussed: {', '.join(topic[:50] for topic in topics)}"
+        
+        return None

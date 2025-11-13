@@ -153,11 +153,23 @@ def query(req: QueryRequest):
         analytics.mark_retrieval_start(tracking_data)
         results = retriever.search(req.question, k=req.k)
         
-        # Generate answer
+        # Get conversation history for context
+        conversation_history = []
+        if req.conversation_id:
+            existing_conversation = conversation_db.get_conversation(req.conversation_id)
+            if existing_conversation:
+                # Convert messages to dict format for generator
+                conversation_history = [
+                    {"role": msg.role, "content": msg.content}
+                    for msg in existing_conversation.messages
+                ]
+        
+        # Generate answer with conversation context
         analytics.mark_generation_start(tracking_data)
         answer = generator.generate(
             question=req.question,
-            contexts=[r["text"] for r in results]
+            contexts=[r["text"] for r in results],
+            conversation_history=conversation_history
         )
         
         # Handle conversation history
