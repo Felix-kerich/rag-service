@@ -1,3 +1,39 @@
+# 🚀 Deployment Checklist - LATEST: Gemini Safety Filter Fix v2
+
+## 🔥 URGENT UPDATE (Nov 13, 2025)
+
+**Context Document Sanitization + Multi-Tier Retry Mechanism Deployed**
+
+### Quick Deployment Steps
+```bash
+cd /home/kerich/Documents/SHAMBABORA/rag-service
+git pull origin master
+docker-compose down && docker-compose up --build -d
+```
+
+### Post-Deploy Test
+```bash
+curl -X POST http://localhost:8088/advice \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_id": "test",
+    "analytics_context": {"crop_type": "maize"},
+    "question": "What disease management for maize?",
+    "conversation_id": "test"
+  }'
+# Should return actual advice, NOT "blocked by safety restrictions"
+```
+
+### What's New
+- ✅ Context documents sanitized (dangerous words replaced)
+- ✅ Two-tier retry mechanism (removes contexts, then minimal settings)
+- ✅ Better debug logging (shows exactly which safety category blocks)
+- ✅ 600-char context chunks (was 900, safer)
+
+See `CONTEXT_SANITIZATION_FIX.md` for details.
+
+---
+
 # 🚀 Deployment Checklist
 
 Complete checklist for deploying your RAG service to production.
