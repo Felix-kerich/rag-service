@@ -56,10 +56,15 @@ class Generator:
         safety_settings=[]
       )
 
-      text = resp.text
-      if text and text.strip():
-        return text.strip()
+      # Check if response has valid content before accessing text
+      if hasattr(resp, 'candidates') and resp.candidates:
+        candidate = resp.candidates[0]
+        if hasattr(candidate, 'content') and candidate.content and candidate.content.parts:
+          text = resp.text
+          if text and text.strip():
+            return text.strip()
       
+      # If no valid content, return fallback
       return f"For your question on {question}, here are practical recommendations: Review your farm records, apply proven techniques, and monitor results closely. Consult local agricultural experts for additional guidance specific to your location and conditions."
 
     except ValueError as e:
@@ -123,15 +128,23 @@ IMPORTANT: Your response must be valid JSON only, without any markdown formattin
         safety_settings=[]
       )
 
-      text = resp.text
-      if text and text.strip():
-        return text.strip()
+      # Check if response has valid content before accessing text
+      if hasattr(resp, 'candidates') and resp.candidates:
+        candidate = resp.candidates[0]
+        if hasattr(candidate, 'content') and candidate.content and candidate.content.parts:
+          text = resp.text
+          if text and text.strip():
+            return text.strip()
       
       # Fallback advice if generation fails
       return '{"advice": "Based on your farm data, focus on optimizing input costs while maintaining yield quality. Implement precision farming techniques and monitor soil health regularly.", "fertilizer_recommendations": ["Apply balanced NPK fertilizer at planting", "Top-dress with nitrogen at V6 stage"], "prioritized_actions": ["Conduct soil testing", "Optimize planting density", "Implement integrated pest management"], "risk_warnings": ["Monitor weather patterns for planting decisions", "Watch for pest and disease pressure"], "seed_recommendations": ["Use certified hybrid varieties adapted to your region"]}'
 
     except ValueError as e:
-      print(f"⚠️  Advice Generation Error: {str(e)[:80]}")
+      error_msg = str(e)
+      if "response.text" in error_msg or "quick accessor" in error_msg:
+        print("⚠️  Google API response blocked or empty - using fallback advice")
+      else:
+        print(f"⚠️  Advice Generation Error: {error_msg[:80]}")
       return '{"advice": "I encountered an issue generating specific advice. Please implement standard maize farming best practices and consult local agricultural extension services.", "fertilizer_recommendations": ["Apply recommended NPK rates for your soil type"], "prioritized_actions": ["Follow local planting calendar", "Monitor crop development stages"], "risk_warnings": ["Stay updated on weather forecasts", "Scout fields regularly"], "seed_recommendations": ["Use locally adapted varieties"]}'
     
     except google_exceptions.GoogleAPIError as e:
@@ -139,5 +152,9 @@ IMPORTANT: Your response must be valid JSON only, without any markdown formattin
       return '{"advice": "Unable to generate personalized advice at this time. Focus on maintaining good agricultural practices and seek guidance from local experts.", "fertilizer_recommendations": ["Follow standard fertilization schedule"], "prioritized_actions": ["Maintain field records", "Follow crop calendar"], "risk_warnings": ["Monitor for common pests and diseases"], "seed_recommendations": ["Use quality certified seeds"]}'
     
     except Exception as e:
-      print(f"⚠️  Unexpected error in advice generation: {str(e)[:80]}")
+      error_msg = str(e)
+      if "response.text" in error_msg or "quick accessor" in error_msg:
+        print("⚠️  Google API response validation failed - using fallback advice")
+      else:
+        print(f"⚠️  Unexpected error in advice generation: {error_msg[:80]}")
       return '{"advice": "Technical issue encountered. Please try again or consult agricultural extension services for guidance.", "fertilizer_recommendations": ["Apply standard fertilizer recommendations"], "prioritized_actions": ["Follow best farming practices"], "risk_warnings": ["Monitor crop health regularly"], "seed_recommendations": ["Use recommended seed varieties"]}'
