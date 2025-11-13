@@ -414,6 +414,49 @@ Generate advice that will help this farmer improve their {crop} production effic
     return prompt
 
 
+def _create_enhanced_fallback_advice(ctx: Dict[str, Any], fallback_plan: Dict[str, Any]) -> Dict[str, Any]:
+    """Create enhanced fallback advice when AI generation fails"""
+    crop = ctx.get("crop_type", "maize")
+    location = ctx.get("location", "your area")
+    profit_margin = _to_float(ctx.get("profit_margin"))
+    avg_yield = _to_float(ctx.get("average_yield_per_unit"))
+    best_yield = _to_float(ctx.get("best_yield"))
+    rainfall = _to_float(ctx.get("rainfall_mm"))
+    
+    # Create personalized advice based on analytics
+    advice_parts = [
+        f"Based on your {crop} farming analytics from {location}, I've analyzed your farm performance to provide targeted recommendations."
+    ]
+    
+    if profit_margin is not None:
+        if profit_margin < 15:
+            advice_parts.append(f"Your current profit margin of {profit_margin:.1f}% indicates room for improvement through cost optimization and yield enhancement.")
+        elif profit_margin < 25:
+            advice_parts.append(f"Your profit margin of {profit_margin:.1f}% is moderate. Focus on efficiency improvements to boost profitability.")
+        else:
+            advice_parts.append(f"Your profit margin of {profit_margin:.1f}% is strong. Maintain current practices while exploring scaling opportunities.")
+    
+    if avg_yield and best_yield:
+        yield_gap = best_yield - avg_yield
+        if yield_gap > (0.2 * avg_yield):
+            advice_parts.append(f"There's significant yield variation across your fields (average: {avg_yield}, best: {best_yield}). Standardizing management practices could increase overall productivity.")
+    
+    if rainfall is not None and rainfall < 500:
+        advice_parts.append(f"With {rainfall}mm rainfall, drought management strategies are crucial for your success.")
+    
+    advice_parts.append("The recommendations below are tailored to your specific conditions and performance data.")
+    
+    enhanced_advice = _decorate_advice(" ".join(advice_parts))
+    
+    return {
+        "advice": enhanced_advice,
+        "fertilizer_recommendations": fallback_plan.get("fertilizer_recommendations", []),
+        "prioritized_actions": fallback_plan.get("prioritized_actions", []),
+        "risk_warnings": fallback_plan.get("risk_warnings", []),
+        "seed_recommendations": fallback_plan.get("seed_recommendations", [])
+    }
+
+
 def _generate_rule_based_recommendations(ctx: Dict[str, Any]) -> Dict[str, Any]:
     crop = ctx.get("crop_type") or "the crop"
     advice_sections: List[str] = []
@@ -612,11 +655,34 @@ def advice(req: AdviceRequest):
 
         analytics.mark_generation_start(tracking_data)
         # Use specialized advice generation method
-        answer = generator.generate_advice(
-            analytics_context=analytics_block,
-            enhanced_prompt=question,
-            contexts=[r["text"] for r in results]
-        )
+        try:
+            answer = generator.generate_advice(
+                analytics_context=analytics_block,
+                enhanced_prompt=question,
+                contexts=[r["text"] for r in results]
+            )
+        except Exception as gen_error:
+            print(f"⚠️ AI generation failed, using enhanced fallback: {str(gen_error)}")
+            # Use enhanced rule-based system when AI fails
+            fallback_plan = _generate_rule_based_recommendations(ctx_dict)
+            enhanced_advice = _create_enhanced_fallback_advice(ctx_dict, fallback_plan)
+            
+            # Complete analytics tracking for fallback
+            analytics.complete_query_tracking(
+                tracking_data=tracking_data,
+                retrieved_contexts=results,
+                response=enhanced_advice["advice"],
+                success=True
+            )
+            
+            return AdviceResponse(
+                advice=enhanced_advice["advice"],
+                fertilizer_recommendations=enhanced_advice["fertilizer_recommendations"],
+                prioritized_actions=enhanced_advice["prioritized_actions"],
+                risk_warnings=enhanced_advice["risk_warnings"],
+                seed_recommendations=enhanced_advice["seed_recommendations"],
+                contexts=results
+            )
         if ADVICE_DEBUG:
             print("\n=== ADVICE DEBUG: Primary Model Answer ===")
             print(answer)
