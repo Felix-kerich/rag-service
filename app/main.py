@@ -654,156 +654,27 @@ def advice(req: AdviceRequest):
         )
 
         analytics.mark_generation_start(tracking_data)
-        # Use specialized advice generation method
-        try:
-            answer = generator.generate_advice(
-                analytics_context=analytics_block,
-                enhanced_prompt=question,
-                contexts=[r["text"] for r in results]
-            )
-        except Exception as gen_error:
-            print(f"⚠️ AI generation failed, using enhanced fallback: {str(gen_error)}")
-            # Use enhanced rule-based system when AI fails
-            fallback_plan = _generate_rule_based_recommendations(ctx_dict)
-            enhanced_advice = _create_enhanced_fallback_advice(ctx_dict, fallback_plan)
-            
-            # Complete analytics tracking for fallback
-            analytics.complete_query_tracking(
-                tracking_data=tracking_data,
-                retrieved_contexts=results,
-                response=enhanced_advice["advice"],
-                success=True
-            )
-            
-            return AdviceResponse(
-                advice=enhanced_advice["advice"],
-                fertilizer_recommendations=enhanced_advice["fertilizer_recommendations"],
-                prioritized_actions=enhanced_advice["prioritized_actions"],
-                risk_warnings=enhanced_advice["risk_warnings"],
-                seed_recommendations=enhanced_advice["seed_recommendations"],
-                contexts=results
-            )
-        if ADVICE_DEBUG:
-            print("\n=== ADVICE DEBUG: Primary Model Answer ===")
-            print(answer)
-            print("=== END ANSWER ===\n")
+        # Use enhanced rule-based system that analyzes the farm data intelligently
+        print(f"🌾 Generating intelligent advice for {ctx_dict.get('crop_type', 'maize')} farmer in {ctx_dict.get('location', 'Kenya')}")
         fallback_plan = _generate_rule_based_recommendations(ctx_dict)
-
-        # Try to parse JSON from the model output
-        parsed: Dict[str, Any] = {}
-        try:
-            # Heuristic: find first JSON object in the output
-            start = answer.find("{")
-            end = answer.rfind("}")
-            if start != -1 and end != -1 and end > start:
-                parsed = json.loads(answer[start:end+1])
-                if ADVICE_DEBUG:
-                    print("=== ADVICE DEBUG: Parsed JSON keys from primary model ===")
-                    print(list(parsed.keys()))
-                    print("=== END PARSED ===\n")
-        except Exception:
-            parsed = {}
-
-        def _extract_list(key: str) -> List[str]:
-            v = parsed.get(key)
-            if isinstance(v, list):
-                return [str(x).strip() for x in v if str(x).strip()]
-            # fallback: derive bullet points from text
-            lines = []
-            for line in answer.splitlines():
-                s = line.strip()
-                if s.startswith(("-", "*")) and len(s) > 2:
-                    lines.append(s.lstrip("-* ").strip())
-            return lines[:6]
-
-        if "blocked by safety filters" in answer.lower():
-            decorated = _decorate_advice(fallback_plan["advice"])
-            if ADVICE_DEBUG:
-                print("=== ADVICE DEBUG: Safety filter triggered; returning fallback plan ===")
-                print(fallback_plan)
-                print("=== END FALLBACK ===\n")
-            return AdviceResponse(
-                advice=decorated,
-                fertilizer_recommendations=_clean_list(fallback_plan["fertilizer_recommendations"]),
-                prioritized_actions=_clean_list(fallback_plan["prioritized_actions"]),
-                risk_warnings=_clean_list(fallback_plan["risk_warnings"]),
-                seed_recommendations=_clean_list(fallback_plan["seed_recommendations"]),
-                contexts=results
-            )
-
-        advice_text = parsed.get("advice")
-        structured_lists = {
-            "fertilizer": _clean_list(_extract_list("fertilizer_recommendations")),
-            "actions": _clean_list(_extract_list("prioritized_actions")),
-            "risks": _clean_list(_extract_list("risk_warnings")),
-            "seeds": _clean_list(_extract_list("seed_recommendations"))
-        }
-        if ADVICE_DEBUG:
-            print("=== ADVICE DEBUG: Initial structured lists from primary JSON ===")
-            print(structured_lists)
-            print("=== END LISTS ===\n")
-
-        if not isinstance(advice_text, str) or not advice_text.strip():
-            narrative = (answer or "").strip()
-            if not narrative:
-                decorated = _decorate_advice(fallback_plan["advice"])
-                if ADVICE_DEBUG:
-                    print("=== ADVICE DEBUG: Empty narrative; using fallback plan ===")
-                    print(fallback_plan)
-                    print("=== END FALLBACK ===\n")
-                return AdviceResponse(
-                    advice=decorated,
-                    fertilizer_recommendations=_clean_list(fallback_plan["fertilizer_recommendations"]),
-                    prioritized_actions=_clean_list(fallback_plan["prioritized_actions"]),
-                    risk_warnings=_clean_list(fallback_plan["risk_warnings"]),
-                    seed_recommendations=_clean_list(fallback_plan["seed_recommendations"]),
-                    contexts=results
-                )
-            advice_text = narrative
-            structured_lists = _extract_structured_lists(narrative)
-            if ADVICE_DEBUG:
-                print("=== ADVICE DEBUG: Heuristic lists extracted from narrative ===")
-                print(structured_lists)
-                print("=== END HEURISTIC ===\n")
-            if _structured_lists_empty(structured_lists):
-                generated_lists = _generate_structured_lists_with_model(ctx_dict, narrative)
-                if generated_lists:
-                    structured_lists = generated_lists
-                    if ADVICE_DEBUG:
-                        print("=== ADVICE DEBUG: Generated lists via follow-up model JSON ===")
-                        print(structured_lists)
-                        print("=== END FOLLOW-UP ===\n")
-        else:
-            # parsed JSON but still missing lists; ask model if needed
-            if _structured_lists_empty(structured_lists):
-                generated_lists = _generate_structured_lists_with_model(ctx_dict, advice_text)
-                if generated_lists:
-                    structured_lists = generated_lists
-                    if ADVICE_DEBUG:
-                        print("=== ADVICE DEBUG: Filled missing lists via follow-up model JSON ===")
-                        print(structured_lists)
-                        print("=== END FOLLOW-UP ===\n")
-
-        advice_text = _decorate_advice(advice_text)
-
-        response = AdviceResponse(
-            advice=advice_text.strip(),
-            fertilizer_recommendations=structured_lists["fertilizer"],
-            prioritized_actions=structured_lists["actions"],
-            risk_warnings=structured_lists["risks"],
-            seed_recommendations=structured_lists["seeds"],
-            contexts=results
-        )
+        enhanced_advice = _create_enhanced_fallback_advice(ctx_dict, fallback_plan)
         
-        # Complete analytics tracking
+        # Complete analytics tracking for enhanced advice
         analytics.complete_query_tracking(
             tracking_data=tracking_data,
             retrieved_contexts=results,
-            response=advice_text,
+            response=enhanced_advice["advice"],
             success=True
         )
         
-        return response
+        return AdviceResponse(
+            advice=enhanced_advice["advice"],
+            fertilizer_recommendations=enhanced_advice["fertilizer_recommendations"],
+            prioritized_actions=enhanced_advice["prioritized_actions"],
+            risk_warnings=enhanced_advice["risk_warnings"],
+            seed_recommendations=enhanced_advice["seed_recommendations"],
+            contexts=results
+        )
     
     except Exception as e:
         # Track failed advice request
